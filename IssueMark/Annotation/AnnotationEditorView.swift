@@ -12,7 +12,7 @@ struct AnnotationEditorView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            canvasArea
+            canvasArea()
             Divider()
             toolbar
         }
@@ -20,7 +20,7 @@ struct AnnotationEditorView: View {
 
     // MARK: - Canvas
 
-    private var canvasArea: some View {
+    private func canvasArea() -> some View {
         GeometryReader { proxy in
             let fitted = fittedSize(imageSize: baseImage.size, in: proxy.size)
             ZStack {
@@ -28,65 +28,75 @@ struct AnnotationEditorView: View {
                     .resizable()
                     .frame(width: fitted.width, height: fitted.height)
 
-                Canvas { context, _ in
-                    let inProgressArrow: Arrow? = vm.pendingArrow
-                        ?? (vm.tool == .arrow
-                            ? vm.dragStart.flatMap { s in
-                                vm.dragCurrent.map { e in Arrow(start: s, end: e, color: vm.selectedColor) }
-                            }
-                            : nil)
+                canvasContent(fitted: fitted)
 
-                    AnnotationRenderer.drawAll(
-                        in: context,
-                        arrows: vm.arrows, labels: vm.labels,
-                        rects: vm.rectAnnotations, callouts: vm.callouts,
-                        redactions: vm.redactions,
-                        inProgressArrow: inProgressArrow,
-                        inProgressRect: vm.dragRect,
-                        inProgressTool: vm.tool
-                    )
-
-                    if vm.tool == .arrow, let s = vm.dragStart, let e = vm.dragCurrent {
-                        let preview = Arrow(start: s, end: e, color: vm.selectedColor)
-                        let dot = preview.labelPosition
-                        let r: CGFloat = 4
-                        let dotRect = CGRect(x: dot.x - r, y: dot.y - r, width: r*2, height: r*2)
-                        context.fill(Path(ellipseIn: dotRect), with: .color(vm.selectedColor.opacity(0.8)))
-                        context.stroke(Path(ellipseIn: dotRect), with: .color(.white.opacity(0.7)),
-                                       style: StrokeStyle(lineWidth: 1))
-                    }
-                }
-                .frame(width: fitted.width, height: fitted.height)
-                .gesture(makeDragGesture())
-                .onTapGesture { location in handleTap(at: location) }
-                .onHover { hovering in
-                    isHoveringCanvas = hovering
-                    if hovering { cursorForTool(vm.tool).push() } else { NSCursor.pop() }
-                }
-                .onChange(of: vm.tool) { _, newTool in
-                    if isHoveringCanvas { NSCursor.pop(); cursorForTool(newTool).push() }
-                }
-
-                // Pending text field (arrow auto-label or text tool)
-                if let pos = vm.pendingTextPosition {
-                    TextField(vm.pendingArrow != nil ? "Label… (Enter to add, Esc to skip)" : "Label…",
-                              text: $vm.pendingText)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(vm.selectedColor)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(RoundedRectangle(cornerRadius: 5).fill(Color.black.opacity(0.55)))
-                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(vm.selectedColor.opacity(0.8), lineWidth: 1))
-                        .fixedSize()
-                        .position(pos)
-                        .onSubmit { vm.commitPendingText() }
-                        .onKeyPress(.escape) { vm.cancelPendingText(); return .handled }
-                }
+                pendingTextOverlay()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .onAppear { vm.canvasSize = fitted }
             .onChange(of: fitted) { _, s in vm.canvasSize = s }
+        }
+    }
+
+    private func canvasContent(fitted: CGSize) -> some View {
+        Canvas { context, _ in
+            let inProgressArrow: Arrow? = vm.pendingArrow
+                ?? (vm.tool == .arrow
+                    ? vm.dragStart.flatMap { s in
+                        vm.dragCurrent.map { e in Arrow(start: s, end: e, color: vm.selectedColor) }
+                    }
+                    : nil)
+
+            AnnotationRenderer.drawAll(
+                in: context,
+                arrows: vm.arrows, labels: vm.labels,
+                rects: vm.rectAnnotations, callouts: vm.callouts,
+                redactions: vm.redactions, blurs: vm.blurs,
+                highlights: vm.highlights,
+                inProgressArrow: inProgressArrow,
+                inProgressRect: vm.dragRect,
+                inProgressTool: vm.tool
+            )
+
+            if vm.tool == .arrow, let s = vm.dragStart, let e = vm.dragCurrent {
+                let preview = Arrow(start: s, end: e, color: vm.selectedColor)
+                let dot = preview.labelPosition
+                let r: CGFloat = 4
+                let dotRect = CGRect(x: dot.x - r, y: dot.y - r, width: r*2, height: r*2)
+                context.fill(Path(ellipseIn: dotRect), with: .color(vm.selectedColor.opacity(0.8)))
+                context.stroke(Path(ellipseIn: dotRect), with: .color(.white.opacity(0.7)),
+                               style: StrokeStyle(lineWidth: 1))
+            }
+        }
+        .frame(width: fitted.width, height: fitted.height)
+        .gesture(makeDragGesture())
+        .onTapGesture { location in handleTap(at: location) }
+        .onHover { hovering in
+            isHoveringCanvas = hovering
+            if hovering { cursorForTool(vm.tool).push() } else { NSCursor.pop() }
+        }
+        .onChange(of: vm.tool) { _, newTool in
+            if isHoveringCanvas { NSCursor.pop(); cursorForTool(newTool).push() }
+        }
+    }
+
+    private func pendingTextOverlay() -> some View {
+        Group {
+            if let pos = vm.pendingTextPosition {
+                TextField(vm.pendingArrow != nil ? "Label… (Enter to add, Esc to skip)" : "Label…",
+                          text: $vm.pendingText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(vm.selectedColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(RoundedRectangle(cornerRadius: 5).fill(Color.black.opacity(0.55)))
+                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(vm.selectedColor.opacity(0.8), lineWidth: 1))
+                    .fixedSize()
+                    .position(pos)
+                    .onSubmit { vm.commitPendingText() }
+                    .onKeyPress(.escape) { vm.cancelPendingText(); return .handled }
+            }
         }
     }
 
@@ -100,8 +110,8 @@ struct AnnotationEditorView: View {
 
     private func cursorForTool(_ tool: AnnotationTool) -> NSCursor {
         switch tool {
-        case .arrow, .rectangle, .redact: return .crosshair
-        case .text, .callout:             return .iBeam
+        case .arrow, .redact, .blur, .highlight: return .crosshair
+        case .text, .callout:                     return .iBeam
         }
     }
 
@@ -110,7 +120,7 @@ struct AnnotationEditorView: View {
     private func makeDragGesture() -> some Gesture {
         DragGesture(minimumDistance: 2)
             .onChanged { value in
-                guard vm.tool == .arrow || vm.tool == .rectangle || vm.tool == .redact else { return }
+                guard vm.tool == .arrow || vm.tool == .redact || vm.tool == .blur || vm.tool == .highlight else { return }
                 if vm.dragStart == nil { vm.dragStart = value.startLocation }
                 vm.dragCurrent = value.location
             }
@@ -130,14 +140,18 @@ struct AnnotationEditorView: View {
                         vm.saveSnapshot()
                         vm.arrows.append(arrow)
                     }
-                case .rectangle:
-                    guard let rect = vm.dragRect, rect.width > 4, rect.height > 4 else { return }
-                    vm.saveSnapshot()
-                    vm.rectAnnotations.append(RectAnnotation(rect: rect, color: vm.selectedColor))
                 case .redact:
                     guard let rect = vm.dragRect, rect.width > 4, rect.height > 4 else { return }
                     vm.saveSnapshot()
                     vm.redactions.append(Redaction(rect: rect))
+                case .blur:
+                    guard let rect = vm.dragRect, rect.width > 4, rect.height > 4 else { return }
+                    vm.saveSnapshot()
+                    vm.blurs.append(Blur(rect: rect))
+                case .highlight:
+                    guard let rect = vm.dragRect, rect.width > 4, rect.height > 4 else { return }
+                    vm.saveSnapshot()
+                    vm.highlights.append(Highlight(rect: rect))
                 default:
                     break
                 }
@@ -177,6 +191,26 @@ struct AnnotationEditorView: View {
                 .frame(width: 28)
                 .help("Annotation colour")
 
+            // Font size slider (for text tool)
+            if vm.tool == .text {
+                VStack(spacing: 4) {
+                    Text("Size").font(.caption2)
+                    Slider(value: $vm.fontSize, in: 10...32, step: 1)
+                        .frame(width: 80)
+                }
+                .help("Text size")
+            }
+
+            // Stroke width slider (for arrow, blur)
+            if [.arrow, .blur].contains(vm.tool) {
+                VStack(spacing: 4) {
+                    Text("Width").font(.caption2)
+                    Slider(value: $vm.strokeWidth, in: 1...6, step: 0.5)
+                        .frame(width: 80)
+                }
+                .help("Stroke width")
+            }
+
             Spacer()
 
             // Undo
@@ -189,6 +223,16 @@ struct AnnotationEditorView: View {
             .help("Undo (⌘Z)")
             .keyboardShortcut("z", modifiers: .command)
 
+            // Redo
+            Button {
+                vm.redo()
+            } label: {
+                Image(systemName: "arrow.uturn.forward")
+            }
+            .disabled(!vm.canRedo)
+            .help("Redo (⌘⇧Z)")
+            .keyboardShortcut("z", modifiers: [.command, .shift])
+
             Divider().frame(height: 20)
 
             Button {
@@ -196,12 +240,16 @@ struct AnnotationEditorView: View {
                 vm.exportToClipboard(baseImage: baseImage)
             } label: {
                 if vm.didCopyToClipboard {
-                    Label("Copied!", systemImage: "checkmark").foregroundStyle(.green)
+                    Label("Copied!", systemImage: "checkmark")
+                        .foregroundStyle(.green)
+                        .transition(.scale.combined(with: .opacity))
                 } else {
                     Label("Copy", systemImage: "doc.on.clipboard")
+                        .transition(.scale.combined(with: .opacity))
                 }
             }
             .help("Copy annotated image to clipboard")
+            .animation(.easeInOut(duration: 0.2), value: vm.didCopyToClipboard)
 
             Button {
                 flushPendingInput()

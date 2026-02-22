@@ -10,6 +10,7 @@ import UniformTypeIdentifiers
 // MARK: - ViewModel
 
 @Observable
+@MainActor
 final class AnnotationEditorViewModel {
 
     // MARK: Tool + colour
@@ -22,6 +23,8 @@ final class AnnotationEditorViewModel {
     }
     var selectedColor: Color = .red
     var didCopyToClipboard: Bool = false
+    var strokeWidth: CGFloat = 2.5
+    var fontSize: CGFloat = 14
 
     // MARK: Committed annotations
     var arrows: [Arrow] = []
@@ -29,7 +32,12 @@ final class AnnotationEditorViewModel {
     var rectAnnotations: [RectAnnotation] = []
     var callouts: [Callout] = []
     var redactions: [Redaction] = []
+    var blurs: [Blur] = []
+    var highlights: [Highlight] = []
     var nextCalloutNumber: Int = 1
+
+    // MARK: Editing state
+    var selectedAnnotationId: UUID?
 
     // MARK: In-progress drag state
     var dragStart: CGPoint?
@@ -45,37 +53,77 @@ final class AnnotationEditorViewModel {
     // MARK: Canvas size (set by the view via GeometryReader)
     var canvasSize: CGSize = .zero
 
-    // MARK: Undo
+    // MARK: Undo/Redo
     private var history: [AnnotationSnapshot] = []
+    private var redoStack: [AnnotationSnapshot] = []
     private let maxHistoryDepth = 50
 
     func saveSnapshot() {
         let snap = AnnotationSnapshot(
             arrows: arrows, labels: labels,
             rectAnnotations: rectAnnotations, callouts: callouts,
-            redactions: redactions, nextCalloutNumber: nextCalloutNumber
+            redactions: redactions, blurs: blurs, highlights: highlights,
+            nextCalloutNumber: nextCalloutNumber
         )
         history.append(snap)
+        redoStack.removeAll() // Clear redo on new action
         if history.count > maxHistoryDepth { history.removeFirst() }
     }
 
     func undo() {
         guard let snap = history.popLast() else { return }
+        // Save current state to redo stack
+        redoStack.append(AnnotationSnapshot(
+            arrows: arrows, labels: labels,
+            rectAnnotations: rectAnnotations, callouts: callouts,
+            redactions: redactions, blurs: blurs, highlights: highlights,
+            nextCalloutNumber: nextCalloutNumber
+        ))
+        // Restore from history
         arrows            = snap.arrows
         labels            = snap.labels
         rectAnnotations   = snap.rectAnnotations
         callouts          = snap.callouts
         redactions        = snap.redactions
+        blurs             = snap.blurs
+        highlights        = snap.highlights
         nextCalloutNumber = snap.nextCalloutNumber
         // Cancel any in-progress input
+        clearPendingState()
+    }
+
+    func redo() {
+        guard let snap = redoStack.popLast() else { return }
+        // Save current state to undo stack
+        history.append(AnnotationSnapshot(
+            arrows: arrows, labels: labels,
+            rectAnnotations: rectAnnotations, callouts: callouts,
+            redactions: redactions, blurs: blurs, highlights: highlights,
+            nextCalloutNumber: nextCalloutNumber
+        ))
+        // Restore from redo stack
+        arrows            = snap.arrows
+        labels            = snap.labels
+        rectAnnotations   = snap.rectAnnotations
+        callouts          = snap.callouts
+        redactions        = snap.redactions
+        blurs             = snap.blurs
+        highlights        = snap.highlights
+        nextCalloutNumber = snap.nextCalloutNumber
+        clearPendingState()
+    }
+
+    private func clearPendingState() {
         pendingArrow = nil
         pendingTextPosition = nil
         pendingText = ""
         dragStart = nil
         dragCurrent = nil
+        selectedAnnotationId = nil
     }
 
     var canUndo: Bool { !history.isEmpty }
+    var canRedo: Bool { !redoStack.isEmpty }
 
     // MARK: Derived helpers
 
@@ -97,7 +145,7 @@ final class AnnotationEditorViewModel {
             arrows.append(arrow)
             let trimmed = pendingText.trimmingCharacters(in: .whitespaces)
             if !trimmed.isEmpty, let pos = pendingTextPosition {
-                labels.append(TextLabel(position: pos, text: trimmed, color: selectedColor))
+                labels.append(TextLabel(position: pos, text: trimmed, color: selectedColor, fontSize: fontSize))
             }
             pendingArrow = nil
         } else {
@@ -109,7 +157,7 @@ final class AnnotationEditorViewModel {
                 return
             }
             saveSnapshot()
-            labels.append(TextLabel(position: pos, text: trimmed, color: selectedColor))
+            labels.append(TextLabel(position: pos, text: trimmed, color: selectedColor, fontSize: fontSize))
         }
         pendingTextPosition = nil
         pendingText = ""
@@ -130,7 +178,6 @@ final class AnnotationEditorViewModel {
 
     /// Renders base image + all annotations. Scales annotation coordinates from canvas
     /// space to image space so exports are always at full image resolution.
-    @MainActor
     func renderAnnotated(baseImage: NSImage) -> NSImage {
         let imageSize = baseImage.size
         let canvas = canvasSize == .zero ? imageSize : canvasSize
@@ -143,6 +190,8 @@ final class AnnotationEditorViewModel {
         let capturedRects   = rectAnnotations
         let capturedCallouts = callouts
         let capturedRedactions = redactions
+        let capturedBlurs = blurs
+        let capturedHighlights = highlights
 
         let view = ZStack(alignment: .topLeading) {
             Image(nsImage: baseImage)
@@ -156,7 +205,8 @@ final class AnnotationEditorViewModel {
                     in: ctx,
                     arrows: capturedArrows, labels: capturedLabels,
                     rects: capturedRects, callouts: capturedCallouts,
-                    redactions: capturedRedactions,
+                    redactions: capturedRedactions, blurs: capturedBlurs,
+                    highlights: capturedHighlights,
                     inProgressArrow: nil, inProgressRect: nil, inProgressTool: .arrow
                 )
             }
@@ -169,7 +219,6 @@ final class AnnotationEditorViewModel {
         return renderer.nsImage ?? baseImage
     }
 
-    @MainActor
     func exportToClipboard(baseImage: NSImage) {
         let rendered = renderAnnotated(baseImage: baseImage)
         let pasteboard = NSPasteboard.general
@@ -182,7 +231,6 @@ final class AnnotationEditorViewModel {
         }
     }
 
-    @MainActor
     func saveToFile(baseImage: NSImage) {
         let rendered = renderAnnotated(baseImage: baseImage)
         guard let tiff   = rendered.tiffRepresentation,
@@ -191,7 +239,8 @@ final class AnnotationEditorViewModel {
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]
-        panel.nameFieldStringValue = "screenshot.png"
+        let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        panel.nameFieldStringValue = "screenshot-\(timestamp).png"
         panel.title = "Save Screenshot"
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
@@ -219,6 +268,8 @@ enum AnnotationRenderer {
         rects: [RectAnnotation],
         callouts: [Callout],
         redactions: [Redaction],
+        blurs: [Blur],
+        highlights: [Highlight],
         inProgressArrow: Arrow?,
         inProgressRect: CGRect?,
         inProgressTool: AnnotationTool
@@ -228,21 +279,25 @@ enum AnnotationRenderer {
         // Redactions first (behind everything)
         for r in redactions { drawRedaction(in: &ctx, redaction: r) }
 
+        // Blurs
+        for b in blurs { drawBlur(in: &ctx, blur: b) }
+
+        // Highlights
+        for h in highlights { drawHighlight(in: &ctx, highlight: h) }
+
         // In-progress redaction preview
         if let rect = inProgressRect, inProgressTool == .redact {
             ctx.fill(Path(rect), with: .color(.black.opacity(0.65)))
         }
 
-        // Rectangles
-        for r in rects { drawRect(in: &ctx, rect: r) }
+        // In-progress blur preview
+        if let rect = inProgressRect, inProgressTool == .blur {
+            ctx.fill(Path(rect), with: .color(.gray.opacity(0.4)))
+        }
 
-        // In-progress rectangle preview (dashed)
-        if let rect = inProgressRect, inProgressTool == .rectangle {
-            ctx.stroke(
-                Path(roundedRect: rect, cornerRadius: 3),
-                with: .color(.white.opacity(0.9)),
-                style: StrokeStyle(lineWidth: 2, dash: [6, 3])
-            )
+        // In-progress highlight preview
+        if let rect = inProgressRect, inProgressTool == .highlight {
+            ctx.fill(Path(rect), with: .color(.yellow.opacity(0.3)))
         }
 
         // Arrows
@@ -261,7 +316,7 @@ enum AnnotationRenderer {
         line.move(to: arrow.start)
         line.addLine(to: arrow.end)
         context.stroke(line, with: .color(arrow.color),
-                       style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                       style: StrokeStyle(lineWidth: arrow.strokeWidth, lineCap: .round))
 
         let dx = arrow.end.x - arrow.start.x
         let dy = arrow.end.y - arrow.start.y
@@ -283,7 +338,7 @@ enum AnnotationRenderer {
     }
 
     static func drawLabel(in context: inout GraphicsContext, label: TextLabel) {
-        let font = NSFont.systemFont(ofSize: 14, weight: .semibold)
+        let font = NSFont.systemFont(ofSize: label.fontSize, weight: .semibold)
         let textSize = (label.text as NSString).size(withAttributes: [.font: font])
         let hPad: CGFloat = 6, vPad: CGFloat = 3
         let bgRect = CGRect(
@@ -291,7 +346,7 @@ enum AnnotationRenderer {
             y: label.position.y - textSize.height/2 - vPad,
             width: textSize.width + hPad*2, height: textSize.height + vPad*2)
         context.fill(Path(roundedRect: bgRect, cornerRadius: 4), with: .color(.black.opacity(0.5)))
-        context.draw(Text(label.text).font(.system(size: 14, weight: .semibold)).foregroundStyle(label.color),
+        context.draw(Text(label.text).font(.system(size: label.fontSize, weight: .semibold)).foregroundStyle(label.color),
                      at: label.position)
     }
 
@@ -299,8 +354,16 @@ enum AnnotationRenderer {
         context.stroke(
             Path(roundedRect: rect.rect, cornerRadius: 3),
             with: .color(rect.color),
-            style: StrokeStyle(lineWidth: 2.5)
+            style: StrokeStyle(lineWidth: rect.strokeWidth)
         )
+    }
+
+    static func drawBlur(in context: inout GraphicsContext, blur: Blur) {
+        context.fill(Path(blur.rect), with: .color(.gray.opacity(0.5)))
+    }
+
+    static func drawHighlight(in context: inout GraphicsContext, highlight: Highlight) {
+        context.fill(Path(highlight.rect), with: .color(.yellow.opacity(0.25)))
     }
 
     static func drawCallout(in context: inout GraphicsContext, callout: Callout) {
