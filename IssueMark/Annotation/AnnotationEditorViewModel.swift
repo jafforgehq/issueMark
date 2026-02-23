@@ -267,12 +267,6 @@ final class AnnotationEditorViewModel {
     /// - Parameter baseImage: The base screenshot image to annotate and save
     func saveToFile(baseImage: NSImage) {
         let rendered = renderAnnotated(baseImage: baseImage)
-        guard let tiff   = rendered.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff),
-              let png    = bitmap.representation(using: .png, properties: [:]) else {
-            NSLog("IssueMark: Failed to encode PNG")
-            return
-        }
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]
@@ -285,9 +279,17 @@ final class AnnotationEditorViewModel {
             return
         }
 
-        panel.beginSheetModal(for: window) { response in
+        panel.beginSheetModal(for: window) { [weak self] response in
             guard response == .OK, let url = panel.url else {
                 NSLog("IssueMark: User cancelled save dialog")
+                return
+            }
+
+            // Encode PNG in the completion handler to ensure data stays alive
+            guard let tiff   = rendered.tiffRepresentation,
+                  let bitmap = NSBitmapImageRep(data: tiff),
+                  let png    = bitmap.representation(using: .png, properties: [:]) else {
+                NSLog("IssueMark: Failed to encode PNG")
                 return
             }
 
