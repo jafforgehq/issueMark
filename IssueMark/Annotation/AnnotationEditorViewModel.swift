@@ -279,7 +279,11 @@ final class AnnotationEditorViewModel {
         let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         panel.nameFieldStringValue = "screenshot-\(timestamp).png"
         panel.title = "Save Screenshot"
-        guard panel.runModal() == .OK, let url = panel.url else {
+
+        let keyWindow = NSApp.keyWindow ?? NSApp.windows.first
+        let response = keyWindow.map { panel.runModal(for: $0) } ?? panel.runModal()
+
+        guard response == .OK, let url = panel.url else {
             NSLog("IssueMark: User cancelled save dialog")
             return
         }
