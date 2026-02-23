@@ -280,24 +280,28 @@ final class AnnotationEditorViewModel {
         panel.nameFieldStringValue = "screenshot-\(timestamp).png"
         panel.title = "Save Screenshot"
 
-        let keyWindow = NSApp.keyWindow ?? NSApp.windows.first
-        let response = keyWindow.map { panel.runModal(for: $0) } ?? panel.runModal()
-
-        guard response == .OK, let url = panel.url else {
-            NSLog("IssueMark: User cancelled save dialog")
+        guard let window = NSApp.keyWindow ?? NSApp.windows.first else {
+            NSLog("IssueMark: No window available for save dialog")
             return
         }
 
-        do {
-            try png.write(to: url)
-            NSLog("IssueMark: Screenshot saved to \(url.path)")
-        } catch {
-            NSLog("IssueMark: Save failed - \(error)")
-            let alert = NSAlert()
-            alert.messageText = "Save Failed"
-            alert.informativeText = error.localizedDescription
-            alert.alertStyle = .warning
-            alert.runModal()
+        panel.beginSheetModal(for: window) { response in
+            guard response == .OK, let url = panel.url else {
+                NSLog("IssueMark: User cancelled save dialog")
+                return
+            }
+
+            do {
+                try png.write(to: url)
+                NSLog("IssueMark: Screenshot saved to \(url.path)")
+            } catch {
+                NSLog("IssueMark: Save failed - \(error)")
+                let alert = NSAlert()
+                alert.messageText = "Save Failed"
+                alert.informativeText = error.localizedDescription
+                alert.alertStyle = .warning
+                alert.runModal()
+            }
         }
     }
 }
