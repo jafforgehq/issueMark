@@ -279,31 +279,31 @@ final class AnnotationEditorViewModel {
             return
         }
 
-        panel.beginSheetModal(for: window) { [weak self] response in
-            guard response == .OK, let url = panel.url else {
-                NSLog("IssueMark: User cancelled save dialog")
-                return
-            }
+        // Use synchronous modal for simplicity
+        let response = panel.runModal()
+        guard response == .OK, let url = panel.url else {
+            NSLog("IssueMark: User cancelled save dialog")
+            return
+        }
 
-            // Encode PNG in the completion handler to ensure data stays alive
-            guard let tiff   = rendered.tiffRepresentation,
-                  let bitmap = NSBitmapImageRep(data: tiff),
-                  let png    = bitmap.representation(using: .png, properties: [:]) else {
-                NSLog("IssueMark: Failed to encode PNG")
-                return
-            }
+        // Encode PNG
+        guard let tiff   = rendered.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let png    = bitmap.representation(using: .png, properties: [:]) else {
+            NSLog("IssueMark: Failed to encode PNG")
+            return
+        }
 
-            do {
-                try png.write(to: url)
-                NSLog("IssueMark: Screenshot saved to \(url.path)")
-            } catch {
-                NSLog("IssueMark: Save failed - \(error)")
-                let alert = NSAlert()
-                alert.messageText = "Save Failed"
-                alert.informativeText = error.localizedDescription
-                alert.alertStyle = .warning
-                alert.runModal()
-            }
+        do {
+            try png.write(to: url)
+            NSLog("IssueMark: Screenshot saved to \(url.path)")
+        } catch {
+            NSLog("IssueMark: Save failed - \(error)")
+            let alert = NSAlert()
+            alert.messageText = "Save Failed"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.runModal()
         }
     }
 }
