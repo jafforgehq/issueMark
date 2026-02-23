@@ -291,35 +291,38 @@ final class AnnotationEditorViewModel {
 
         NSLog("IssueMark: PNG encoded successfully, size: \(png.count) bytes")
 
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.png]
-        let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
-        panel.nameFieldStringValue = "screenshot-\(timestamp).png"
-        panel.title = "Save Screenshot"
+        // Defer dialog to next run loop to ensure view layout is complete
+        DispatchQueue.main.async {
+            NSLog("IssueMark: Opening save dialog")
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [.png]
+            let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+            panel.nameFieldStringValue = "screenshot-\(timestamp).png"
+            panel.title = "Save Screenshot"
 
-        NSLog("IssueMark: Opening save dialog")
-        let response = panel.runModal()
-        NSLog("IssueMark: Save dialog response: \(response.rawValue)")
+            let response = panel.runModal()
+            NSLog("IssueMark: Save dialog response: \(response.rawValue)")
 
-        guard response == .OK, let url = panel.url else {
-            NSLog("IssueMark: User cancelled save dialog")
-            return
-        }
+            guard response == .OK, let url = panel.url else {
+                NSLog("IssueMark: User cancelled save dialog")
+                return
+            }
 
-        NSLog("IssueMark: Saving to URL: \(url.path)")
-        do {
-            try png.write(to: url)
-            NSLog("IssueMark: Screenshot saved successfully to \(url.path)")
+            NSLog("IssueMark: Saving to URL: \(url.path)")
+            do {
+                try png.write(to: url)
+                NSLog("IssueMark: Screenshot saved successfully to \(url.path)")
 
-            let alert = NSAlert()
-            alert.messageText = "Saved!"
-            alert.informativeText = "Screenshot saved to:\n\(url.path)"
-            alert.alertStyle = .informational
-            alert.addButton(withTitle: "OK")
-            alert.runModal()
-        } catch {
-            NSLog("IssueMark: Save failed - \(error.localizedDescription)")
-            showErrorAlert("Save Failed", error.localizedDescription)
+                let alert = NSAlert()
+                alert.messageText = "Saved!"
+                alert.informativeText = "Screenshot saved to:\n\(url.path)"
+                alert.alertStyle = .informational
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            } catch {
+                NSLog("IssueMark: Save failed - \(error.localizedDescription)")
+                self.showErrorAlert("Save Failed", error.localizedDescription)
+            }
         }
     }
 
