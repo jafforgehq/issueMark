@@ -266,7 +266,30 @@ final class AnnotationEditorViewModel {
     /// Saves the annotated image to a PNG file with user-selected location.
     /// - Parameter baseImage: The base screenshot image to annotate and save
     func saveToFile(baseImage: NSImage) {
+        NSLog("IssueMark: saveToFile called")
         let rendered = renderAnnotated(baseImage: baseImage)
+        NSLog("IssueMark: Image rendered, size: \(rendered.size)")
+
+        // Encode PNG first, before opening dialog
+        guard let tiff = rendered.tiffRepresentation else {
+            NSLog("IssueMark: Failed to get TIFF representation")
+            showErrorAlert("Failed to encode image", "Could not convert image to TIFF format")
+            return
+        }
+
+        guard let bitmap = NSBitmapImageRep(data: tiff) else {
+            NSLog("IssueMark: Failed to create bitmap")
+            showErrorAlert("Failed to encode image", "Could not create bitmap representation")
+            return
+        }
+
+        guard let png = bitmap.representation(using: .png, properties: [:]) else {
+            NSLog("IssueMark: Failed to get PNG representation")
+            showErrorAlert("Failed to encode image", "Could not convert image to PNG format")
+            return
+        }
+
+        NSLog("IssueMark: PNG encoded successfully, size: \(png.count) bytes")
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]
@@ -274,37 +297,39 @@ final class AnnotationEditorViewModel {
         panel.nameFieldStringValue = "screenshot-\(timestamp).png"
         panel.title = "Save Screenshot"
 
-        guard let window = NSApp.keyWindow ?? NSApp.windows.first else {
-            NSLog("IssueMark: No window available for save dialog")
-            return
-        }
-
-        // Use synchronous modal for simplicity
+        NSLog("IssueMark: Opening save dialog")
         let response = panel.runModal()
+        NSLog("IssueMark: Save dialog response: \(response.rawValue)")
+
         guard response == .OK, let url = panel.url else {
             NSLog("IssueMark: User cancelled save dialog")
             return
         }
 
-        // Encode PNG
-        guard let tiff   = rendered.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff),
-              let png    = bitmap.representation(using: .png, properties: [:]) else {
-            NSLog("IssueMark: Failed to encode PNG")
-            return
-        }
-
+        NSLog("IssueMark: Saving to URL: \(url.path)")
         do {
             try png.write(to: url)
-            NSLog("IssueMark: Screenshot saved to \(url.path)")
-        } catch {
-            NSLog("IssueMark: Save failed - \(error)")
+            NSLog("IssueMark: Screenshot saved successfully to \(url.path)")
+
             let alert = NSAlert()
-            alert.messageText = "Save Failed"
-            alert.informativeText = error.localizedDescription
-            alert.alertStyle = .warning
+            alert.messageText = "Saved!"
+            alert.informativeText = "Screenshot saved to:\n\(url.path)"
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "OK")
             alert.runModal()
+        } catch {
+            NSLog("IssueMark: Save failed - \(error.localizedDescription)")
+            showErrorAlert("Save Failed", error.localizedDescription)
         }
+    }
+
+    private func showErrorAlert(_ title: String, _ message: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 }
 
