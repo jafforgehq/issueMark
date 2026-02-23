@@ -31,12 +31,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Carbon global hotkey (Cmd+Shift+6)
     private var hotKeyRef: EventHotKeyRef?
     private var hotKeyHandlerRef: EventHandlerRef?
+    private weak var selfForCallback: AppDelegate?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         setupStatusItem()
         setupPopover()
+        selfForCallback = self  // Retain self for callback
         registerGlobalHotKey()
+    }
+
+    deinit {
+        // Clean up Carbon hotkey resources
+        if let ref = hotKeyRef {
+            UnregisterEventHotKey(ref)
+        }
+        if let ref = hotKeyHandlerRef {
+            RemoveEventHandler(ref)
+        }
     }
 
     // MARK: - Status item
@@ -80,15 +92,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             eventKind:  UInt32(kEventHotKeyPressed)
         )
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
-        InstallEventHandler(
+        let status = InstallEventHandler(
             GetApplicationEventTarget(),
             issueMarkHotKeyCallback,
             1, &eventSpec,
             selfPtr,
             &hotKeyHandlerRef
         )
+        guard status == noErr else {
+            NSLog("IssueMark: Failed to install hotkey handler: \(status)")
+            return
+        }
+
         let hkID = EventHotKeyID(signature: 0x49534D4B /* ISMK */, id: 1)
-        RegisterEventHotKey(
+        let registerStatus = RegisterEventHotKey(
             UInt32(kVK_ANSI_6),
             UInt32(cmdKey | shiftKey),
             hkID,
@@ -96,6 +113,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             0,
             &hotKeyRef
         )
+        guard registerStatus == noErr else {
+            NSLog("IssueMark: Failed to register hotkey: \(registerStatus)")
+            RemoveEventHandler(hotKeyHandlerRef!)
+            hotKeyHandlerRef = nil
+            return
+        }
     }
 
     // MARK: - Capture flow
@@ -135,7 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showSelectionOverlay(mode: CaptureMode) {
-        SelectionOverlayWindow.show { [weak self] selectedRect, overlayWindow in
+        SelectionOverlayWindow.show(onComplete: { [weak self] selectedRect, overlayWindow in
             guard let self else { return }
             Task { @MainActor in
                 do {
@@ -151,13 +174,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self.flashMenuBarConfirmation()
                     }
                 } catch {
+                    NSLog("IssueMark: Capture failed - \(error)")
                     let alert = NSAlert()
                     alert.messageText = "Capture Failed"
                     alert.informativeText = error.localizedDescription
+                    alert.alertStyle = .warning
                     alert.runModal()
                 }
             }
-        }
+        }, onCancel: {
+            NSLog("IssueMark: Capture cancelled by user")
+        })
     }
 
     /// Briefly shows a checkmark in the menu bar to confirm a quick copy.

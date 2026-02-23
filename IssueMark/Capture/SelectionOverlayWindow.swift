@@ -13,9 +13,11 @@ final class SelectionOverlayWindow: NSWindow {
     private let overlayView = SelectionOverlayView()
 
     /// Shows the selection overlay on the screen that currently contains the mouse cursor.
-    /// `completion` is called with the selected rect in screen coordinates (bottom-left origin)
-    /// and a reference to the overlay window so the capture can exclude it.
-    static func show(completion: @escaping (CGRect, NSWindow) -> Void) {
+    /// - Parameters:
+    ///   - onComplete: Called with the selected rect in screen coordinates (bottom-left origin)
+    ///     and a reference to the overlay window so the capture can exclude it.
+    ///   - onCancel: Called if the user cancels the selection (presses Escape).
+    static func show(onComplete: @escaping (CGRect, NSWindow) -> Void, onCancel: @escaping () -> Void = {}) {
         let mouseLocation = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouseLocation, $0.frame, false) }
             ?? NSScreen.main
@@ -29,13 +31,14 @@ final class SelectionOverlayWindow: NSWindow {
             NSCursor.pop()
             window.orderOut(nil)
             SelectionOverlayWindow.current = nil
-            completion(rect, window)
+            onComplete(rect, window)
         }
 
         window.overlayView.onCancel = {
             NSCursor.pop()
             window.orderOut(nil)
             SelectionOverlayWindow.current = nil
+            onCancel()
         }
 
         window.makeKeyAndOrderFront(nil)

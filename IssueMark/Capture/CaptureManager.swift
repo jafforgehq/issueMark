@@ -7,10 +7,17 @@ import AppKit
 import ScreenCaptureKit
 
 @Observable
+@MainActor
 final class CaptureManager {
 
-    /// Captures `rect` (AppKit screen coordinates: bottom-left origin, points)
-    /// on the display that contains the rect, excluding the overlay window.
+    /// Captures the specified region from the display containing it.
+    /// - Parameters:
+    ///   - rect: Selection rectangle in AppKit screen coordinates (bottom-left origin, points).
+    ///           Coordinates are relative to the screen's origin, not absolute.
+    ///   - overlayWindow: Window to exclude from capture (typically the selection overlay).
+    /// - Returns: Image at logical point size (1:1 with rect dimensions).
+    ///           Width and height match the rect's dimensions; pixels scale with display backingScaleFactor.
+    /// - Throws: CaptureError.noDisplay if no matching display found.
     func captureRegion(_ rect: CGRect, excludingWindow overlayWindow: NSWindow) async throws -> NSImage {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
 
@@ -51,10 +58,18 @@ final class CaptureManager {
     // MARK: - Helpers
 
     /// Finds the SCDisplay / NSScreen pair whose bounds contain `rect`.
+    /// Bridges between ScreenCaptureKit (SC) and AppKit (NS) coordinate systems.
+    /// - Parameters:
+    ///   - rect: Selection rectangle in AppKit coordinates (bottom-left origin).
+    ///   - content: Shareable content containing available displays.
+    /// - Returns: Tuple of (SCDisplay for capture, NSScreen for coordinate conversion).
+    /// - Throws: CaptureError.noDisplay if no displays available.
+    /// - Note: CGDirectDisplayID serves as the bridge between SC and NS display IDs.
     private func matchDisplay(
         for rect: CGRect,
         in content: SCShareableContent
     ) throws -> (SCDisplay, NSScreen) {
+        // Try to find exact match by checking which screen contains the rect origin
         for scDisplay in content.displays {
             // CGDirectDisplayID is used as the bridge between SC and NS worlds.
             if let nsScreen = NSScreen.screens.first(where: {
@@ -66,9 +81,14 @@ final class CaptureManager {
                 }
             }
         }
-        // Fall back to the first display if nothing matches.
-        guard let scDisplay = content.displays.first else { throw CaptureError.noDisplay }
+
+        // Fall back to primary display if no exact match
+        guard let scDisplay = content.displays.first else {
+            NSLog("IssueMark: No shareable displays found")
+            throw CaptureError.noDisplay
+        }
         let nsScreen = NSScreen.main ?? NSScreen.screens[0]
+        NSLog("IssueMark: Using fallback display for capture")
         return (scDisplay, nsScreen)
     }
 }

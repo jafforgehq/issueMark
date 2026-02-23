@@ -5,6 +5,9 @@
 
 import AppKit
 
+/// Full-screen view for interactive rectangle selection.
+/// Displays a semi-transparent overlay with a clear selection rectangle and dimension label.
+/// Communicates selection via closures when user completes or cancels.
 final class SelectionOverlayView: NSView {
 
     var onSelectionComplete: ((CGRect) -> Void)?
@@ -13,6 +16,12 @@ final class SelectionOverlayView: NSView {
     private var startPoint: NSPoint?
     private var currentRect: NSRect = .zero
     private var isDragging = false
+
+    // Overlay appearance constants
+    private let dimOverlayOpacity: CGFloat = 0.45  // Visible yet dim enough to see screen
+    private let selectionBorderWidth: CGFloat = 1
+    private let labelFontSize: CGFloat = 11
+    private let edgeInset: CGFloat = 4
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -23,8 +32,8 @@ final class SelectionOverlayView: NSView {
     // MARK: - Drawing
 
     override func draw(_ dirtyRect: NSRect) {
-        // Semi-transparent dark overlay
-        NSColor(white: 0, alpha: 0.45).setFill()
+        // Semi-transparent dark overlay dims the screen
+        NSColor(white: 0, alpha: dimOverlayOpacity).setFill()
         bounds.fill()
 
         guard isDragging, !currentRect.isEmpty else { return }
@@ -35,27 +44,27 @@ final class SelectionOverlayView: NSView {
         // White border around selection
         NSColor.white.setStroke()
         let border = NSBezierPath(rect: currentRect.insetBy(dx: 0.5, dy: 0.5))
-        border.lineWidth = 1
+        border.lineWidth = selectionBorderWidth
         border.stroke()
 
-        // Size label
+        // Size label with optional "square" indicator
         let isSquare = currentRect.width == currentRect.height
         let sizeStr = "\(Int(currentRect.width)) × \(Int(currentRect.height))\(isSquare ? "  (square)" : "")"
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
+            .font: NSFont.monospacedDigitSystemFont(ofSize: labelFontSize, weight: .medium),
             .foregroundColor: NSColor.white
         ]
         let labelSize = (sizeStr as NSString).size(withAttributes: attrs)
 
-        // Default: draw above selection; fall back to below if it would clip off-screen.
-        var labelX = currentRect.minX + 4
-        var labelY = currentRect.maxY + 4
-        if labelY + labelSize.height > bounds.maxY - 4 {
-            labelY = currentRect.minY - labelSize.height - 4
+        // Position label: prefer above selection, fall back to below if would clip
+        var labelX = currentRect.minX + edgeInset
+        var labelY = currentRect.maxY + edgeInset
+        if labelY + labelSize.height > bounds.maxY - edgeInset {
+            labelY = currentRect.minY - labelSize.height - edgeInset
         }
-        // Prevent right-edge clipping.
-        if labelX + labelSize.width > bounds.maxX - 4 {
-            labelX = bounds.maxX - labelSize.width - 4
+        // Prevent right-edge clipping
+        if labelX + labelSize.width > bounds.maxX - edgeInset {
+            labelX = bounds.maxX - labelSize.width - edgeInset
         }
         (sizeStr as NSString).draw(at: NSPoint(x: labelX, y: labelY), withAttributes: attrs)
     }
@@ -76,16 +85,19 @@ final class SelectionOverlayView: NSView {
         var w = abs(current.x - start.x)
         var h = abs(current.y - start.y)
 
-        // Hold Shift to constrain to a square.
+        // Shift modifier: constrain to square selection
         if event.modifierFlags.contains(.shift) {
             let side = max(w, h)
-            w = side; h = side
+            w = side
+            h = side
         }
 
+        // Calculate rect origin depending on drag direction
         currentRect = NSRect(
             x: current.x < start.x ? start.x - w : start.x,
             y: current.y < start.y ? start.y - h : start.y,
-            width: w, height: h
+            width: w,
+            height: h
         )
         isDragging = true
         needsDisplay = true
@@ -111,6 +123,11 @@ final class SelectionOverlayView: NSView {
 
     // MARK: - Helpers
 
+    /// Converts a selection rectangle from view coordinates to screen coordinates.
+    /// - Parameters:
+    ///   - viewRect: Rectangle in view coordinate system
+    ///   - window: Window to convert through
+    /// - Returns: Rectangle in screen coordinate system (bottom-left origin)
     private func screenRect(from viewRect: NSRect, in window: NSWindow) -> NSRect {
         window.convertToScreen(convert(viewRect, to: nil))
     }

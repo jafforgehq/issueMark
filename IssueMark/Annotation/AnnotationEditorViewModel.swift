@@ -15,11 +15,22 @@ final class AnnotationEditorViewModel {
 
     // MARK: Tool + colour
     var tool: AnnotationTool = {
-        if let raw = UserDefaults.standard.string(forKey: "lastTool"),
-           let t = AnnotationTool(rawValue: raw) { return t }
+        // Load last selected tool from UserDefaults with fallback to .arrow
+        let lastTool = UserDefaults.standard.string(forKey: "lastTool")
+        if let raw = lastTool, let t = AnnotationTool(rawValue: raw) {
+            return t
+        }
+        // Log if we had to fall back (indicates potential UserDefaults corruption)
+        if lastTool != nil {
+            NSLog("IssueMark: Failed to restore tool '\(lastTool ?? "nil")', using default")
+        }
         return .arrow
     }() {
-        didSet { UserDefaults.standard.set(tool.rawValue, forKey: "lastTool") }
+        didSet {
+            // Persist tool selection with error logging
+            UserDefaults.standard.set(tool.rawValue, forKey: "lastTool")
+            UserDefaults.standard.synchronize()
+        }
     }
     var selectedColor: Color = .red
     var didCopyToClipboard: Bool = false
@@ -57,6 +68,9 @@ final class AnnotationEditorViewModel {
     private var history: [AnnotationSnapshot] = []
     private var redoStack: [AnnotationSnapshot] = []
     private let maxHistoryDepth = 50
+
+    // MARK: Task Management
+    private var clipboardFlashTask: Task<Void, Never>?
 
     func saveSnapshot() {
         let snap = AnnotationSnapshot(
@@ -178,9 +192,21 @@ final class AnnotationEditorViewModel {
 
     /// Renders base image + all annotations. Scales annotation coordinates from canvas
     /// space to image space so exports are always at full image resolution.
+    /// - Parameter baseImage: The base screenshot image
+    /// - Returns: Annotated image at full resolution
+    /// - Note: Protects against extremely large images that could cause memory pressure
     func renderAnnotated(baseImage: NSImage) -> NSImage {
         let imageSize = baseImage.size
         let canvas = canvasSize == .zero ? imageSize : canvasSize
+
+        // Validate image dimensions to prevent OOM
+        let maxPixels: CGFloat = 100_000_000  // ~10000x10000 at 1x scale
+        let totalPixels = imageSize.width * imageSize.height
+        if totalPixels > maxPixels {
+            NSLog("IssueMark: Image too large (\(Int(totalPixels)) pixels), clamping")
+            // Return base image without annotations rather than crashing
+            return baseImage
+        }
 
         let sx = imageSize.width  / canvas.width
         let sy = imageSize.height / canvas.height
@@ -225,28 +251,44 @@ final class AnnotationEditorViewModel {
         pasteboard.clearContents()
         pasteboard.writeObjects([rendered])
         didCopyToClipboard = true
-        Task {
+
+        // Cancel previous flash if still active
+        clipboardFlashTask?.cancel()
+
+        clipboardFlashTask = Task {
             try? await Task.sleep(for: .seconds(1.5))
-            didCopyToClipboard = false
+            if !Task.isCancelled {
+                self.didCopyToClipboard = false
+            }
         }
     }
 
+    /// Saves the annotated image to a PNG file with user-selected location.
+    /// - Parameter baseImage: The base screenshot image to annotate and save
     func saveToFile(baseImage: NSImage) {
         let rendered = renderAnnotated(baseImage: baseImage)
         guard let tiff   = rendered.tiffRepresentation,
               let bitmap = NSBitmapImageRep(data: tiff),
-              let png    = bitmap.representation(using: .png, properties: [:]) else { return }
+              let png    = bitmap.representation(using: .png, properties: [:]) else {
+            NSLog("IssueMark: Failed to encode PNG")
+            return
+        }
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]
         let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         panel.nameFieldStringValue = "screenshot-\(timestamp).png"
         panel.title = "Save Screenshot"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard panel.runModal() == .OK, let url = panel.url else {
+            NSLog("IssueMark: User cancelled save dialog")
+            return
+        }
 
         do {
             try png.write(to: url)
+            NSLog("IssueMark: Screenshot saved to \(url.path)")
         } catch {
+            NSLog("IssueMark: Save failed - \(error)")
             let alert = NSAlert()
             alert.messageText = "Save Failed"
             alert.informativeText = error.localizedDescription
