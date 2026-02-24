@@ -25,6 +25,8 @@
 - **Custom Colors**: Pick any color from the color picker
 - **Global Hotkey**: Press Cmd+Shift+6 to start capturing from anywhere
 
+![Annotation Tools](annotation-tools.png)
+
 ## 🚀 Quick Start
 
 ### Clone & Open
